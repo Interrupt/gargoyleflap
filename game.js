@@ -15,6 +15,8 @@ var worldSpriteSheet;
 var player;
 var sky;
 var ground;
+var clouds;
+
 var stage;
 
 var obstacleTimer = 100;
@@ -29,6 +31,11 @@ var gameOver = true;
 var speed = 6;
 
 var message;
+
+var playerAnim = "fly";
+
+var lastHeight = 8;
+var lastTopHeight = 20; 
 
 function makePlayer() {
 	var newplayer = new createjs.Sprite(playerSpriteSheet, "fly");
@@ -48,7 +55,7 @@ function makePlayer() {
 		}
 
 		// move in x if free
-		if(isFree(this.x + this.xa, this.y, 60, 25)) {
+		if(isFree(this.x + this.xa, this.y, 60, 25, this, false)) {
 			this.x += this.xa;
 		}
 		else {
@@ -57,15 +64,21 @@ function makePlayer() {
 		}
 
 		// move in y if free
-		if(isFree(this.x, this.y + this.ya, 60, 25)) {
+		if(isFree(this.x, this.y + this.ya, 60, 25, this, true)) {
 			this.y += this.ya;
 		}
-		else this.ya = 0;
+		else {
+			if(this.ya > 0 && playerAnim != "run") {
+				player.gotoAndPlay("run");
+				playerAnim = "run";
+			}
+			this.ya = 0;
+		}
 
 		// gravity
 		this.ya += 0.3;
 
-		if(this.x < -60) endGame();
+		if(this.x < -80) endGame();
 	}
 
 	return newplayer;
@@ -110,15 +123,25 @@ function init() {
     manifest = [
 			{src:"background.png", id:"background"},
 			{src:"ground.png", id:"ground"},
-			{src:"game-over.png", id:"game-over"}
+			{src:"game-over.png", id:"game-over"},
+			{src:"clouds.png", id:"clouds"}
 		];
 
 		loader = new createjs.LoadQueue(false);
-		loader.addEventListener("complete", handleComplete);
+		loader.addEventListener("complete", loadComplete);
 		loader.loadManifest(manifest);
 }
 
-function handleComplete() {
+function loadComplete() {
+
+	clouds = new createjs.Shape();
+	clouds.graphics.beginBitmapFill(loader.getResult("clouds")).drawRect(0,0,640,64);
+	clouds.scaleX = 3;
+	clouds.scaleY = 3;
+	clouds.tileW = 10;
+	clouds.y = 60;
+	stage.addChild(clouds);
+
 	sky = new createjs.Shape();
 	sky.graphics.beginBitmapFill(loader.getResult("background")).drawRect(0,0,640,64);
 	sky.scaleX = 3;
@@ -147,9 +170,9 @@ function loadGraphics() {
 	        "numFrames": 16,
 	        "regX": 1,
 	        "regY": 1,
-	        "height": 128
+	        "height": 32
 	    },
-    "animations": {"fly": [0, 2]},
+    "animations": {"fly": [0, 2], "run": [4, 7]},
     "images": ["./player-ss.png"]
 	});
 
@@ -169,6 +192,7 @@ function loadGraphics() {
 	});
 
 	playerSpriteSheet.getAnimation("fly").speed = 0.2;
+	playerSpriteSheet.getAnimation("run").speed = 0.2;
 }
 
 function tick() {
@@ -193,16 +217,20 @@ function tick() {
 		ground.x -= speed;
 		ground.x %= 64 * 3;
 
+		clouds.x -= speed / 12.0;
+		clouds.x %= 128 * 3;
+
 		// generate new obstacles
 		obstacleTimer += speed;
 		if(obstacleTimer > 90) {
 			obstacleTimer = 0;
 			//var y = 6 - Math.random() * 3;
-			var y = 6 - Math.sin(time * 0.1) * 1.3 ;
+			var y = 8 - Math.sin(time * 0.1) * 2;
 			y = Math.floor(y);
 			var mod = Math.random() > 0.7;
 
-			var topHeight = 12;
+			var topHeight = 11;
+
 			if(mod) topHeight++;
 
 			var floorMod = Math.random() > 0.75;
@@ -210,6 +238,22 @@ function tick() {
 				y--;
 				topHeight++;
 			}
+
+			var ceilingDiff = getCeilingHeight(y - topHeight) - lastHeight;
+			var floorDiff = lastTopHeight - getFloorHeight(y);
+
+			// make sure the player can actually fit
+			if(floorDiff < 3) {
+				y += 3 - floorDiff;
+				//console.log("Shoved floor");
+			}
+			if(ceilingDiff < 3) {
+				topHeight += 3 - ceilingDiff;
+				//console.log("Shoved ceiling");
+			}
+
+			lastHeight = getFloorHeight(y);
+			lastTopHeight = getCeilingHeight(y - topHeight);
 
 			makeObstacle(16, y);
 			makeObstacle(16, y - topHeight);
@@ -236,6 +280,11 @@ function startGame() {
 	ground.x = 0;
 
 	removeMessage();
+
+	player.gotoAndPlay("fly");
+	playerAnim = "fly";
+
+	time = 0;
 }
 
 function endGame() {
@@ -250,6 +299,11 @@ function handleKeyDown(e) {
         	if(!KEYS_DOWN[KEYCODE_SPACE]) {
         		if(!gameOver) {
         			player.ya = -8;
+
+        			if(playerAnim != "fly") {
+						player.gotoAndPlay("fly");
+						playerAnim = "fly";
+					}
         		}
         		else {
         			startGame();
@@ -277,19 +331,27 @@ function removeEntity(entity) {
 	}
 }
 
-function isFree(xLoc, yLoc, width, height) {
+function isFree(xLoc, yLoc, width, height, checking, moveY) {
 	if(yLoc < -30) {
+		if(checking != null && moveY) checking.y = -29.99;
 		return false;
 	}
-	else if(yLoc > 360) {
+	else if(yLoc > 345) {
+		if(checking != null && moveY) checking.y = 344.99;
 		return false;
 	}
 
 	for(i = 0; i < entities.length; i++) {
 		var entity = entities[i];
 		if(xLoc + width * 0.5 > entity.x - entity.width * 0.5 && xLoc < entity.x + entity.width * 0.5) {
-			if(yLoc > entity.y - 72 && yLoc < entity.y + entity.height - 72) return false;
-			if(yLoc - height > entity.y - 72 && yLoc - height < entity.y + entity.height - 72) return false;
+			if(yLoc > entity.y - 92 && yLoc < entity.y + entity.height - 92) {
+				if(checking != null && moveY) checking.y = entity.y - 93;
+				return false;
+			}
+			if(yLoc - height > entity.y - 70 && yLoc - height < entity.y + entity.height - 70) {
+				if(checking != null && moveY) checking.y = entity.y + entity.height - 70 + height;
+				return false;
+			}
 		}    
 	}
 
@@ -311,4 +373,12 @@ function showGameOverMessage() {
 
 function removeMessage() {
 	if(message) stage.removeChild(message);
+}
+
+function getCeilingHeight(topHeight) {
+	return (topHeight - 8) * -1 - 6;
+}
+
+function getFloorHeight(floorHeight) {
+	return floorHeight * -1 + 9;
 }
